@@ -3,7 +3,7 @@
  * Plugin Name: MMPRO Email Alias Manager
  * Plugin URI: https://memberminderpro.com/
  * Description: Manage email aliases and forward rules with a JSON API endpoint for Cloudflare Workers.
- * Version: 1.0.2
+ * Version: 1.0.3
  * Author: Member Minder Pro, LLC
  * Author URI: https://memberminderpro.com/
  * Text Domain: mmpro-email-aliases
@@ -25,8 +25,8 @@ class MMPRO_Email_Alias_Manager {
         add_action('admin_init', array($this, 'register_settings'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
         
-        // API endpoint
-        add_action('rest_api_init', array($this, 'register_api_endpoint'));
+        // API endpoint - IMPORTANT: proper priority for REST API
+        add_action('rest_api_init', array($this, 'register_api_endpoint'), 10);
         add_action('init', array($this, 'add_rewrite_rules'));
         
         // Plugin activation hook
@@ -190,6 +190,18 @@ class MMPRO_Email_Alias_Manager {
         // Get saved data
         $aliases_data = get_option('mmpro_email_aliases_data', array());
         
+        $registration_time = get_option('mmpro_rest_api_registered');
+        if ($registration_time) {
+            echo '<div class="notice notice-info is-dismissible">';
+            echo '<p>' . sprintf(__('REST API endpoints were last registered at: %s', 'mmpro-email-aliases'), 
+                                date('Y-m-d H:i:s', $registration_time)) . '</p>';
+            echo '</div>';
+        } else {
+            echo '<div class="notice notice-error is-dismissible">';
+            echo '<p>' . __('REST API endpoints have not been registered yet. This indicates a problem.', 'mmpro-email-aliases') . '</p>';
+            echo '</div>';
+        }
+
         if (isset($_POST['submit_aliases']) && check_admin_referer('mmpro_save_aliases', 'mmpro_nonce')) {
             // Process form submission
             $new_aliases = array();
@@ -409,6 +421,7 @@ class MMPRO_Email_Alias_Manager {
             </script>
         </div>
         <?php
+
     }
     
     /**
@@ -458,16 +471,32 @@ class MMPRO_Email_Alias_Manager {
     }
     
     /**
-     * Register the API endpoint
-     */
-    public function register_api_endpoint() {
-        register_rest_route('mmpro/v1', '/aliases', array(
-            'methods' => 'GET',
-            'callback' => array($this, 'get_aliases_json'),
-            'permission_callback' => '__return_true', // Public endpoint
-        ));
-    }
+ * Register the API endpoints
+ */
+public function register_api_endpoint() {
+    // Add this debug code to verify the hook is running
+    update_option('mmpro_rest_api_registered', time());
     
+    // Register the aliases endpoint
+    register_rest_route('mmpro/v1', '/aliases', array(
+        'methods' => WP_REST_Server::READABLE, // Use constant instead of 'GET'
+        'callback' => array($this, 'get_aliases_json'),
+        'permission_callback' => '__return_true',
+    ));
+    
+    // Register a test endpoint
+    register_rest_route('mmpro/v1', '/test', array(
+        'methods' => WP_REST_Server::READABLE,
+        'callback' => function() {
+            return array(
+                'status' => 'success',
+                'message' => 'MMPRO Email Aliases API is working!',
+                'time' => current_time('mysql')
+            );
+        },
+        'permission_callback' => '__return_true',
+    ));
+}
     /**
      * Add rewrite rules for API endpoint
      */
