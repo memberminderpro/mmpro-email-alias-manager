@@ -3,7 +3,7 @@
  * Plugin Name: MMPRO Email Alias Manager
  * Plugin URI: https://memberminderpro.com/
  * Description: Manage email aliases and forward rules with a JSON API endpoint for Cloudflare Workers.
- * Version: 1.0.5-alpha.1
+ * Version: 1.0.6-alpha.1
  * Author: Member Minder Pro, LLC
  * Author URI: https://memberminderpro.com/
  * Text Domain: mmpro-email-aliases
@@ -281,375 +281,470 @@ class MMPRO_Email_Alias_Manager {
         
         return $output;
     }
-    
     /**
-     * Render admin page
-     */
-    public function render_admin_page() {
-        // Check for data loss issue
-        $this->check_for_data_loss();
+ * Render admin page with improved layout
+ */
+public function render_admin_page() {
+    // Check for data loss issue
+    $this->check_for_data_loss();
+    
+    // Get saved data with backup fallback
+    $aliases_data = $this->get_aliases_data_with_backup();
+    
+    // Process form submissions
+    $this->process_form_submissions($aliases_data);
+    
+    ?>
+    <div class="wrap mmpro-admin-wrapper">
+        <h1><?php _e('Email Aliases Manager', 'mmpro-email-aliases'); ?></h1>
         
-        // Get saved data with backup fallback
-        $aliases_data = $this->get_aliases_data_with_backup();
+        <?php if ($this->has_data_persistence_issue()): ?>
+            <div class="data-persistence-warning">
+                <h3><?php _e('⚠️ Data Persistence Issue Detected', 'mmpro-email-aliases'); ?></h3>
+                <p><?php _e('We\'ve detected that your email aliases data is being lost between page loads. This could be caused by:', 'mmpro-email-aliases'); ?></p>
+                <ul style="list-style: disc; margin-left: 20px;">
+                    <li><?php _e('Another plugin interfering with WordPress options', 'mmpro-email-aliases'); ?></li>
+                    <li><?php _e('Object cache configuration issues', 'mmpro-email-aliases'); ?></li>
+                    <li><?php _e('Database permission issues', 'mmpro-email-aliases'); ?></li>
+                </ul>
+                <p>
+                    <a href="<?php echo wp_nonce_url(admin_url('admin.php?page=mmpro-email-aliases&action=recover_data'), 'mmpro_recover_data'); ?>" class="button button-primary">
+                        <?php _e('Attempt Data Recovery', 'mmpro-email-aliases'); ?>
+                    </a>
+                    <a href="<?php echo admin_url('admin.php?page=mmpro-email-aliases-diagnostics'); ?>" class="button">
+                        <?php _e('View Diagnostics', 'mmpro-email-aliases'); ?>
+                    </a>
+                </p>
+            </div>
+        <?php endif; ?>
         
-        $registration_time = get_option('mmpro_rest_api_registered');
-        if ($registration_time) {
-            echo '<div class="notice notice-info is-dismissible">';
-            echo '<p>' . sprintf(__('REST API endpoints were last registered at: %s', 'mmpro-email-aliases'), 
-                                  date('Y-m-d H:i:s', $registration_time)) . '</p>';
-            echo '</div>';
-        } else {
-            echo '<div class="notice notice-error is-dismissible">';
-            echo '<p>' . __('REST API endpoints have not been registered yet. This indicates a problem.', 'mmpro-email-aliases') . '</p>';
-            echo '<p><a href="' . admin_url('admin.php?page=mmpro-email-aliases-diagnostics') . '" class="button">' . 
-                  __('Run API Diagnostics', 'mmpro-email-aliases') . '</a></p>';
-            echo '</div>';
-        }
-        
-        // Data persistence debug
-        $this->show_data_persistence_debug();
-        
-        if (isset($_POST['submit_aliases']) && check_admin_referer('mmpro_save_aliases', 'mmpro_nonce')) {
-            // Process form submission
-            $new_aliases = array();
-            
-            if (isset($_POST['aliases']) && is_array($_POST['aliases'])) {
-                foreach ($_POST['aliases'] as $index => $data) {
-                    if (empty($data['address']) || !isset($data['destinations']) || !is_array($data['destinations'])) {
-                        continue;
-                    }
+        <div class="mmpro-admin-columns">
+            <!-- Main Content Column -->
+            <div class="mmpro-main-column">
+                <!-- Main Instructions Card -->
+                <div class="mmpro-card">
+                    <h2><?php _e('Email Aliases Management', 'mmpro-email-aliases'); ?></h2>
+                    <p><?php _e('Create and manage email aliases that will forward to one or more destination addresses.', 'mmpro-email-aliases'); ?></p>
+                    <p><?php _e('Each alias will be available through the API for use with Cloudflare Email Workers.', 'mmpro-email-aliases'); ?></p>
                     
-                    $alias = sanitize_email($data['address']);
-                    $destinations = array_map('sanitize_email', $data['destinations']);
-                    $destinations = array_filter($destinations);
-                    
-                    if (!empty($alias) && !empty($destinations)) {
-                        $new_aliases[$alias] = $destinations;
-                    }
-                }
-            }
-            
-            // Save with multiple methods for redundancy
-            update_option('mmpro_email_aliases_data', $new_aliases);
-            update_option('mmpro_email_aliases_data_backup', $new_aliases);
-            
-            // Also save as a separate name to check for conflicts
-            update_option('mmpro_email_aliases_data_alt', $new_aliases);
-            
-            // Log successful save
-            $this->log_data_operation('save', count($new_aliases));
-            
-            delete_transient('mmpro_email_aliases_cache');
-            $aliases_data = $new_aliases;
-            
-            echo '<div class="notice notice-success is-dismissible"><p>' . __('Aliases saved successfully!', 'mmpro-email-aliases') . '</p></div>';
-        }
-        
-        // Handle import
-        if (isset($_POST['import_aliases']) && check_admin_referer('mmpro_import_aliases', 'mmpro_import_nonce')) {
-            if (!empty($_FILES['import_file']['tmp_name'])) {
-                $format = isset($_POST['format']) ? sanitize_text_field($_POST['format']) : 'json';
-                $file = $_FILES['import_file']['tmp_name'];
-                $import_data = array();
+                    <div class="mmpro-button-row">
+                        <button type="button" id="add-alias-top" class="button"><?php _e('Add New Alias', 'mmpro-email-aliases'); ?></button>
+                        <button type="submit" form="mmpro-aliases-form" name="submit_aliases" class="button button-primary"><?php _e('Save All Aliases', 'mmpro-email-aliases'); ?></button>
+                    </div>
+                </div>
                 
-                if ($format === 'json') {
-                    $content = file_get_contents($file);
-                    $data = json_decode($content, true);
+                <!-- Aliases Form -->
+                <form method="post" action="" id="mmpro-aliases-form">
+                    <?php wp_nonce_field('mmpro_save_aliases', 'mmpro_nonce'); ?>
                     
-                    if ($data && is_array($data)) {
-                        $import_data = $data;
-                    }
-                } elseif ($format === 'csv') {
-                    if (($handle = fopen($file, 'r')) !== false) {
-                        // Skip header row
-                        fgetcsv($handle);
-                        
-                        while (($row = fgetcsv($handle)) !== false) {
-                            if (count($row) >= 2 && !empty($row[0])) {
-                                $alias = sanitize_email($row[0]);
-                                $destinations = array_map('trim', explode(',', $row[1]));
-                                $destinations = array_map('sanitize_email', $destinations);
-                                $destinations = array_filter($destinations);
-                                
-                                if (!empty($alias) && !empty($destinations)) {
-                                    $import_data[$alias] = $destinations;
-                                }
+                    <div id="mmpro-aliases-container">
+                        <?php
+                        $index = 0;
+                        if (!empty($aliases_data)) {
+                            foreach ($aliases_data as $alias => $destinations) {
+                                $this->render_alias_card($index, $alias, $destinations);
+                                $index++;
                             }
                         }
-                        
-                        fclose($handle);
-                    }
-                }
-                
-                if (!empty($import_data)) {
-                    // Save with multiple methods for redundancy
-                    update_option('mmpro_email_aliases_data', $import_data);
-                    update_option('mmpro_email_aliases_data_backup', $import_data);
+                        ?>
+                    </div>
                     
-                    // Also save as a separate name to check for conflicts
-                    update_option('mmpro_email_aliases_data_alt', $import_data);
-                    
-                    // Log successful import
-                    $this->log_data_operation('import', count($import_data));
-                    
-                    delete_transient('mmpro_email_aliases_cache');
-                    $aliases_data = $import_data;
-                    echo '<div class="notice notice-success is-dismissible"><p>' . __('Aliases imported successfully!', 'mmpro-email-aliases') . '</p></div>';
-                } else {
-                    echo '<div class="notice notice-error is-dismissible"><p>' . __('Invalid import file or format.', 'mmpro-email-aliases') . '</p></div>';
-                }
-            }
-        }
-        
-        // Handle export
-        if (isset($_GET['action']) && $_GET['action'] === 'export' && isset($_GET['_wpnonce']) && wp_verify_nonce($_GET['_wpnonce'], 'mmpro_export')) {
-            $format = isset($_GET['format']) ? sanitize_text_field($_GET['format']) : 'json';
-            
-            if ($format === 'json') {
-                header('Content-Type: application/json');
-                header('Content-Disposition: attachment; filename="email-aliases-' . date('Y-m-d') . '.json"');
-                echo json_encode($aliases_data, JSON_PRETTY_PRINT);
-                exit;
-            } elseif ($format === 'csv') {
-                header('Content-Type: text/csv');
-                header('Content-Disposition: attachment; filename="email-aliases-' . date('Y-m-d') . '.csv"');
-                
-                $output = fopen('php://output', 'w');
-                fputcsv($output, array('Alias', 'Destinations'));
-                
-                foreach ($aliases_data as $alias => $destinations) {
-                    fputcsv($output, array($alias, implode(', ', $destinations)));
-                }
-                
-                fclose($output);
-                exit;
-            }
-        }
-        
-        // Handle data recovery
-        if (isset($_GET['action']) && $_GET['action'] === 'recover_data' && isset($_GET['_wpnonce']) && wp_verify_nonce($_GET['_wpnonce'], 'mmpro_recover_data')) {
-            $backup_data = get_option('mmpro_email_aliases_data_backup', array());
-            $alt_data = get_option('mmpro_email_aliases_data_alt', array());
-            
-            // Choose the non-empty backup source
-            $recovery_data = !empty($backup_data) ? $backup_data : $alt_data;
-            
-            if (!empty($recovery_data)) {
-                update_option('mmpro_email_aliases_data', $recovery_data);
-                delete_transient('mmpro_email_aliases_cache');
-                
-                // Log recovery operation
-                $this->log_data_operation('recovery', count($recovery_data));
-                
-                $aliases_data = $recovery_data;
-                echo '<div class="notice notice-success is-dismissible">';
-                echo '<p>' . sprintf(__('Successfully recovered %d aliases from backup!', 'mmpro-email-aliases'), count($recovery_data)) . '</p>';
-                echo '</div>';
-            } else {
-                echo '<div class="notice notice-error is-dismissible">';
-                echo '<p>' . __('No backup data found to recover.', 'mmpro-email-aliases') . '</p>';
-                echo '</div>';
-            }
-        }
-        
-        ?>
-        <div class="wrap">
-            <h1><?php _e('Email Aliases Manager', 'mmpro-email-aliases'); ?></h1>
-            
-            <?php if ($this->has_data_persistence_issue()): ?>
-                <div class="data-persistence-warning">
-                    <h3><?php _e('⚠️ Data Persistence Issue Detected', 'mmpro-email-aliases'); ?></h3>
-                    <p><?php _e('We\'ve detected that your email aliases data is being lost between page loads. This could be caused by:', 'mmpro-email-aliases'); ?></p>
-                    <ul style="list-style: disc; margin-left: 20px;">
-                        <li><?php _e('Another plugin interfering with WordPress options', 'mmpro-email-aliases'); ?></li>
-                        <li><?php _e('Object cache configuration issues', 'mmpro-email-aliases'); ?></li>
-                        <li><?php _e('Database permission issues', 'mmpro-email-aliases'); ?></li>
-                    </ul>
-                    <p>
-                        <a href="<?php echo wp_nonce_url(admin_url('admin.php?page=mmpro-email-aliases&action=recover_data'), 'mmpro_recover_data'); ?>" class="button button-primary">
-                            <?php _e('Attempt Data Recovery', 'mmpro-email-aliases'); ?>
-                        </a>
-                        <a href="<?php echo admin_url('admin.php?page=mmpro-email-aliases-diagnostics'); ?>" class="button">
-                            <?php _e('View Diagnostics', 'mmpro-email-aliases'); ?>
-                        </a>
-                    </p>
-                </div>
-            <?php endif; ?>
-            
-            <!-- REST API diagnostic info -->
-            <div class="mmpro-card">
-                <h2><?php _e('API Status', 'mmpro-email-aliases'); ?></h2>
-                <p>
-                    <?php _e('Standard REST API URL:', 'mmpro-email-aliases'); ?> 
-                    <a href="<?php echo esc_url(rest_url('mmpro/v1/aliases')); ?>" target="_blank">
-                        <?php echo esc_html(rest_url('mmpro/v1/aliases')); ?>
-                    </a>
-                </p>
-                <p>
-                    <?php _e('Pretty URL:', 'mmpro-email-aliases'); ?> 
-                    <a href="<?php echo esc_url(home_url('api/aliases/')); ?>" target="_blank">
-                        <?php echo esc_html(home_url('api/aliases/')); ?>
-                    </a>
-                </p>
-                <p>
-                    <a href="<?php echo admin_url('admin.php?page=mmpro-email-aliases-diagnostics'); ?>" class="button">
-                        <?php _e('View API Diagnostics', 'mmpro-email-aliases'); ?>
-                    </a>
-                    <a href="<?php echo wp_nonce_url(admin_url('admin.php?page=mmpro-email-aliases&action=flush_rules'), 'mmpro_flush_rules'); ?>" class="button">
-                        <?php _e('Flush Rewrite Rules', 'mmpro-email-aliases'); ?>
-                    </a>
-                    <a href="<?php echo wp_nonce_url(admin_url('admin.php?page=mmpro-email-aliases&action=direct_access'), 'mmpro_direct_access'); ?>" class="button">
-                        <?php _e('Use Direct API (No REST API)', 'mmpro-email-aliases'); ?>
-                    </a>
-                </p>
-                
-                <?php
-                // Handle flush rules action
-                if (isset($_GET['action']) && $_GET['action'] === 'flush_rules' && isset($_GET['_wpnonce']) && wp_verify_nonce($_GET['_wpnonce'], 'mmpro_flush_rules')) {
-                    $this->add_rewrite_rules();
-                    flush_rewrite_rules();
-                    echo '<div class="notice notice-success is-dismissible"><p>' . __('Rewrite rules flushed successfully!', 'mmpro-email-aliases') . '</p></div>';
-                }
-                
-                // Handle direct API access setup
-                if (isset($_GET['action']) && $_GET['action'] === 'direct_access' && isset($_GET['_wpnonce']) && wp_verify_nonce($_GET['_wpnonce'], 'mmpro_direct_access')) {
-                    $this->setup_direct_api_access();
-                    echo '<div class="notice notice-success is-dismissible"><p>' . __('Direct API access has been set up at: ', 'mmpro-email-aliases');
-                    echo '<a href="' . home_url('direct-api/aliases.php') . '" target="_blank">' . home_url('direct-api/aliases.php') . '</a></p></div>';
-                }
-                ?>
-            </div>
-            
-            <!-- Export buttons -->
-            <div class="mmpro-export-buttons" style="margin: 15px 0;">
-                <a href="<?php echo wp_nonce_url(admin_url('admin.php?page=mmpro-email-aliases&action=export&format=json'), 'mmpro_export'); ?>" class="button" style="margin-right: 10px;">Export as JSON</a>
-                <a href="<?php echo wp_nonce_url(admin_url('admin.php?page=mmpro-email-aliases&action=export&format=csv'), 'mmpro_export'); ?>" class="button">Export as CSV</a>
-            </div>
-            
-            <!-- Import form -->
-            <div class="mmpro-import-form" style="margin: 15px 0; padding: 15px; background: #fff; border: 1px solid #ccd0d4; box-shadow: 0 1px 1px rgba(0,0,0,.04);">
-                <h2><?php _e('Import Aliases', 'mmpro-email-aliases'); ?></h2>
-                <form method="post" enctype="multipart/form-data">
-                    <?php wp_nonce_field('mmpro_import_aliases', 'mmpro_import_nonce'); ?>
-                    <p>
-                        <label for="import_file"><?php _e('Select File:', 'mmpro-email-aliases'); ?></label>
-                        <input type="file" name="import_file" id="import_file" required>
-                    </p>
-                    <p>
-                        <label for="format"><?php _e('Format:', 'mmpro-email-aliases'); ?></label>
-                        <select name="format" id="format">
-                            <option value="json">JSON</option>
-                            <option value="csv">CSV</option>
-                        </select>
-                    </p>
-                    <p>
-                        <input type="submit" name="import_aliases" class="button button-primary" value="<?php _e('Import', 'mmpro-email-aliases'); ?>">
-                    </p>
+                    <div class="mmpro-button-row" style="margin-top: 20px;">
+                        <button type="button" id="add-alias-bottom" class="button"><?php _e('Add New Alias', 'mmpro-email-aliases'); ?></button>
+                        <input type="submit" name="submit_aliases" class="button button-primary" value="<?php _e('Save All Aliases', 'mmpro-email-aliases'); ?>">
+                    </div>
                 </form>
             </div>
             
-            <div class="mmpro-card">
-                <h3><?php _e('Current Data Status', 'mmpro-email-aliases'); ?></h3>
-                <p>
-                    <?php printf(__('Primary Data Storage: <strong>%d aliases</strong>', 'mmpro-email-aliases'), count(get_option('mmpro_email_aliases_data', array()))); ?>
-                </p>
-                <p>
-                    <?php printf(__('Backup Data Storage: <strong>%d aliases</strong>', 'mmpro-email-aliases'), count(get_option('mmpro_email_aliases_data_backup', array()))); ?>
-                </p>
-                <p>
-                    <?php printf(__('Alternate Data Storage: <strong>%d aliases</strong>', 'mmpro-email-aliases'), count(get_option('mmpro_email_aliases_data_alt', array()))); ?>
-                </p>
-            </div>
-            
-            <!-- Aliases form with repeater-like UI -->
-            <form method="post" action="" id="mmpro-aliases-form">
-                <?php wp_nonce_field('mmpro_save_aliases', 'mmpro_nonce'); ?>
+            <!-- Sidebar Column -->
+            <div class="mmpro-sidebar-column">
+                <!-- Import/Export Card -->
+                <div class="mmpro-card">
+                    <h3><?php _e('Import & Export', 'mmpro-email-aliases'); ?></h3>
+                    <div class="mmpro-export-buttons" style="margin-bottom: 15px;">
+                        <a href="<?php echo wp_nonce_url(admin_url('admin.php?page=mmpro-email-aliases&action=export&format=json'), 'mmpro_export'); ?>" class="button"><?php _e('Export as JSON', 'mmpro-email-aliases'); ?></a>
+                        <a href="<?php echo wp_nonce_url(admin_url('admin.php?page=mmpro-email-aliases&action=export&format=csv'), 'mmpro_export'); ?>" class="button"><?php _e('Export as CSV', 'mmpro-email-aliases'); ?></a>
+                    </div>
+                    
+                    <h4><?php _e('Import Aliases', 'mmpro-email-aliases'); ?></h4>
+                    <form method="post" enctype="multipart/form-data">
+                        <?php wp_nonce_field('mmpro_import_aliases', 'mmpro_import_nonce'); ?>
+                        <p>
+                            <label for="import_file"><?php _e('Select File:', 'mmpro-email-aliases'); ?></label>
+                            <input type="file" name="import_file" id="import_file" required>
+                        </p>
+                        <p>
+                            <label for="format"><?php _e('Format:', 'mmpro-email-aliases'); ?></label>
+                            <select name="format" id="format">
+                                <option value="json">JSON</option>
+                                <option value="csv">CSV</option>
+                            </select>
+                        </p>
+                        <p>
+                            <input type="submit" name="import_aliases" class="button button-primary" value="<?php _e('Import', 'mmpro-email-aliases'); ?>">
+                        </p>
+                    </form>
+                </div>
                 
-                <div id="mmpro-aliases-container">
+                <!-- API Status Card -->
+                <div class="mmpro-card">
+                    <h3><?php _e('API Status', 'mmpro-email-aliases'); ?></h3>
                     <?php
-                    $index = 0;
-                    if (!empty($aliases_data)) {
-                        foreach ($aliases_data as $alias => $destinations) {
-                            $this->render_alias_card($index, $alias, $destinations);
-                            $index++;
-                        }
+                    $registration_time = get_option('mmpro_rest_api_registered');
+                    if ($registration_time) {
+                        echo '<p><span class="dashicons dashicons-yes-alt" style="color:green;"></span> ';
+                        echo sprintf(__('REST API registered at: %s', 'mmpro-email-aliases'), 
+                                    date('Y-m-d H:i:s', $registration_time)) . '</p>';
+                    } else {
+                        echo '<p><span class="dashicons dashicons-warning" style="color:red;"></span> ';
+                        echo __('REST API not registered', 'mmpro-email-aliases') . '</p>';
                     }
                     ?>
+                    
+                    <p><strong><?php _e('API Endpoints:', 'mmpro-email-aliases'); ?></strong></p>
+                    <ul>
+                        <li>
+                            <a href="<?php echo esc_url(rest_url('mmpro/v1/aliases')); ?>" target="_blank">
+                                <?php _e('Standard REST API', 'mmpro-email-aliases'); ?>
+                            </a>
+                        </li>
+                        <li>
+                            <a href="<?php echo esc_url(home_url('api/aliases/')); ?>" target="_blank">
+                                <?php _e('Pretty URL', 'mmpro-email-aliases'); ?>
+                            </a>
+                        </li>
+                        <?php if (file_exists(ABSPATH . 'direct-api/aliases.php')): ?>
+                        <li>
+                            <a href="<?php echo esc_url(home_url('direct-api/aliases.php')); ?>" target="_blank">
+                                <?php _e('Direct API', 'mmpro-email-aliases'); ?>
+                            </a>
+                        </li>
+                        <?php endif; ?>
+                    </ul>
+                    
+                    <p>
+                        <a href="<?php echo admin_url('admin.php?page=mmpro-email-aliases-diagnostics'); ?>" class="button">
+                            <?php _e('API Diagnostics', 'mmpro-email-aliases'); ?>
+                        </a>
+                        <?php if (!file_exists(ABSPATH . 'direct-api/aliases.php')): ?>
+                        <a href="<?php echo wp_nonce_url(admin_url('admin.php?page=mmpro-email-aliases&action=direct_access'), 'mmpro_direct_access'); ?>" class="button">
+                            <?php _e('Setup Direct API', 'mmpro-email-aliases'); ?>
+                        </a>
+                        <?php endif; ?>
+                    </p>
                 </div>
                 
-                <p>
-                    <button type="button" id="add-alias" class="button"><?php _e('Add New Alias', 'mmpro-email-aliases'); ?></button>
-                    <input type="submit" name="submit_aliases" class="button button-primary" value="<?php _e('Save All Aliases', 'mmpro-email-aliases'); ?>">
-                </p>
-            </form>
-            
-            <!-- Templates for JavaScript -->
-            <script type="text/html" id="tmpl-alias-card">
-                <?php $this->render_alias_card('{{data.index}}', '', array('')); ?>
-            </script>
-            
-            <script type="text/html" id="tmpl-destination-item">
-                <div class="mmpro-destination-item">
-                    <input type="email" name="aliases[{{data.aliasIndex}}][destinations][]" value="" class="regular-text" required>
-                    <button type="button" class="button button-small mmpro-remove-destination"><?php _e('Remove', 'mmpro-email-aliases'); ?></button>
+                <!-- Data Status Card -->
+                <div class="mmpro-card">
+                    <h3><?php _e('Data Status', 'mmpro-email-aliases'); ?></h3>
+                    <p>
+                        <?php printf(__('Primary Data: <strong>%d aliases</strong>', 'mmpro-email-aliases'), count(get_option('mmpro_email_aliases_data', array()))); ?>
+                    </p>
+                    <p>
+                        <?php printf(__('Backup Data: <strong>%d aliases</strong>', 'mmpro-email-aliases'), count(get_option('mmpro_email_aliases_data_backup', array()))); ?>
+                    </p>
+                    <p>
+                        <?php printf(__('Alternate Data: <strong>%d aliases</strong>', 'mmpro-email-aliases'), count(get_option('mmpro_email_aliases_data_alt', array()))); ?>
+                    </p>
+                    
+                    <?php if ($this->has_data_persistence_issue()): ?>
+                    <p>
+                        <a href="<?php echo wp_nonce_url(admin_url('admin.php?page=mmpro-email-aliases&action=recover_data'), 'mmpro_recover_data'); ?>" class="button">
+                            <?php _e('Recover Data', 'mmpro-email-aliases'); ?>
+                        </a>
+                    </p>
+                    <?php endif; ?>
                 </div>
-            </script>
+            </div>
+        </div>
+        
+        <!-- Templates for JavaScript -->
+        <script type="text/html" id="tmpl-alias-card">
+            <?php $this->render_alias_card('{{data.index}}', '', array('')); ?>
+        </script>
+        
+        <script type="text/html" id="tmpl-destination-item">
+            <div class="mmpro-destination-item">
+                <input type="email" name="aliases[{{data.aliasIndex}}][destinations][]" value="" class="regular-text" required>
+                <button type="button" class="button button-small mmpro-remove-destination"><?php _e('Remove', 'mmpro-email-aliases'); ?></button>
+            </div>
+        </script>
+        
+        <style type="text/css">
+            .mmpro-admin-wrapper {
+                margin-right: 20px;
+            }
             
-            <script>
-                jQuery(document).ready(function($) {
-                    var nextIndex = <?php echo $index; ?>;
+            .mmpro-admin-columns {
+                display: flex;
+                gap: 20px;
+                margin-top: 20px;
+            }
+            
+            .mmpro-main-column {
+                flex: 3;
+                min-width: 0; /* Fix for flexbox overflow */
+            }
+            
+            .mmpro-sidebar-column {
+                flex: 1;
+                min-width: 250px;
+                max-width: 350px;
+            }
+            
+            .mmpro-card {
+                background: #fff;
+                border: 1px solid #ccd0d4;
+                box-shadow: 0 1px 1px rgba(0,0,0,.04);
+                padding: 15px;
+                margin-bottom: 20px;
+            }
+            
+            .mmpro-card h2, .mmpro-card h3, .mmpro-card h4 {
+                margin-top: 0;
+                margin-bottom: 15px;
+            }
+            
+            .mmpro-button-row {
+                display: flex;
+                gap: 10px;
+                margin-top: 15px;
+            }
+            
+            @media (max-width: 782px) {
+                .mmpro-admin-columns {
+                    flex-direction: column;
+                }
+                
+                .mmpro-sidebar-column {
+                    max-width: none;
+                }
+            }
+        </style>
+        
+        <script>
+            jQuery(document).ready(function($) {
+                var nextIndex = <?php echo $index; ?>;
+                
+                // Function to add new alias card
+                function addNewAliasCard() {
+                    var template = $('#tmpl-alias-card').html();
+                    template = template.replace(/\{\{data\.index\}\}/g, nextIndex);
                     
-                    // Add alias button
-                    $('#add-alias').on('click', function() {
-                        var template = $('#tmpl-alias-card').html();
-                        template = template.replace(/\{\{data\.index\}\}/g, nextIndex);
-                        
-                        $('#mmpro-aliases-container').append(template);
-                        nextIndex++;
-                    });
+                    $('#mmpro-aliases-container').append(template);
+                    nextIndex++;
+                }
+                
+                // Add alias buttons (both top and bottom)
+                $('#add-alias-top, #add-alias-bottom').on('click', function() {
+                    addNewAliasCard();
+                });
+                
+                // Remove alias button
+                $(document).on('click', '.mmpro-remove-alias', function(e) {
+                    e.preventDefault();
                     
-                    // Remove alias button
-                    $(document).on('click', '.mmpro-remove-alias', function(e) {
-                        e.preventDefault();
-                        
-                        if (confirm('<?php _e('Are you sure you want to remove this alias?', 'mmpro-email-aliases'); ?>')) {
-                            $(this).closest('.mmpro-alias-card').remove();
-                        }
-                    });
-                    
-                    // Add destination button
-                    $(document).on('click', '.mmpro-add-destination', function() {
-                        var aliasCard = $(this).closest('.mmpro-alias-card');
-                        var aliasIndex = aliasCard.data('index');
-                        var destinationsContainer = aliasCard.find('.mmpro-destinations-container');
-                        
-                        var template = $('#tmpl-destination-item').html();
-                        template = template.replace(/\{\{data\.aliasIndex\}\}/g, aliasIndex);
-                        
-                        destinationsContainer.append(template);
-                    });
-                    
-                    // Remove destination button
-                    $(document).on('click', '.mmpro-remove-destination', function() {
-                        var destinationItems = $(this).closest('.mmpro-destinations-container').find('.mmpro-destination-item');
-                        
-                        // Don't remove if it's the last one
-                        if (destinationItems.length > 1) {
-                            $(this).closest('.mmpro-destination-item').remove();
-                        } else {
-                            alert('<?php _e('You must have at least one destination email address.', 'mmpro-email-aliases'); ?>');
-                        }
-                    });
-                    
-                    // If no aliases exist, add one empty card
-                    if ($('.mmpro-alias-card').length === 0) {
-                        $('#add-alias').trigger('click');
+                    if (confirm('<?php _e('Are you sure you want to remove this alias?', 'mmpro-email-aliases'); ?>')) {
+                        $(this).closest('.mmpro-alias-card').remove();
                     }
                 });
-            </script>
-        </div>
-        <?php
+                
+                // Add destination button
+                $(document).on('click', '.mmpro-add-destination', function() {
+                    var aliasCard = $(this).closest('.mmpro-alias-card');
+                    var aliasIndex = aliasCard.data('index');
+                    var destinationsContainer = aliasCard.find('.mmpro-destinations-container');
+                    
+                    var template = $('#tmpl-destination-item').html();
+                    template = template.replace(/\{\{data\.aliasIndex\}\}/g, aliasIndex);
+                    
+                    destinationsContainer.append(template);
+                });
+                
+                // Remove destination button
+                $(document).on('click', '.mmpro-remove-destination', function() {
+                    var destinationItems = $(this).closest('.mmpro-destinations-container').find('.mmpro-destination-item');
+                    
+                    // Don't remove if it's the last one
+                    if (destinationItems.length > 1) {
+                        $(this).closest('.mmpro-destination-item').remove();
+                    } else {
+                        alert('<?php _e('You must have at least one destination email address.', 'mmpro-email-aliases'); ?>');
+                    }
+                });
+                
+                // If no aliases exist, add one empty card
+                if ($('.mmpro-alias-card').length === 0) {
+                    addNewAliasCard();
+                }
+            });
+        </script>
+    </div>
+    <?php
+}
+
+/**
+ * Process form submissions
+ */
+private function process_form_submissions(&$aliases_data) {
+    // Handle flush rules action
+    if (isset($_GET['action']) && $_GET['action'] === 'flush_rules' && isset($_GET['_wpnonce']) && wp_verify_nonce($_GET['_wpnonce'], 'mmpro_flush_rules')) {
+        $this->add_rewrite_rules();
+        flush_rewrite_rules();
+        echo '<div class="notice notice-success is-dismissible"><p>' . __('Rewrite rules flushed successfully!', 'mmpro-email-aliases') . '</p></div>';
     }
+    
+    // Handle direct API access setup
+    if (isset($_GET['action']) && $_GET['action'] === 'direct_access' && isset($_GET['_wpnonce']) && wp_verify_nonce($_GET['_wpnonce'], 'mmpro_direct_access')) {
+        $this->setup_direct_api_access();
+        echo '<div class="notice notice-success is-dismissible"><p>' . __('Direct API access has been set up at: ', 'mmpro-email-aliases');
+        echo '<a href="' . home_url('direct-api/aliases.php') . '" target="_blank">' . home_url('direct-api/aliases.php') . '</a></p></div>';
+    }
+    
+    // Handle save aliases
+    if (isset($_POST['submit_aliases']) && check_admin_referer('mmpro_save_aliases', 'mmpro_nonce')) {
+        // Process form submission
+        $new_aliases = array();
+        
+        if (isset($_POST['aliases']) && is_array($_POST['aliases'])) {
+            foreach ($_POST['aliases'] as $index => $data) {
+                if (empty($data['address']) || !isset($data['destinations']) || !is_array($data['destinations'])) {
+                    continue;
+                }
+                
+                $alias = sanitize_email($data['address']);
+                $destinations = array_map('sanitize_email', $data['destinations']);
+                $destinations = array_filter($destinations);
+                
+                if (!empty($alias) && !empty($destinations)) {
+                    $new_aliases[$alias] = $destinations;
+                }
+            }
+        }
+        
+        // Save with multiple methods for redundancy
+        update_option('mmpro_email_aliases_data', $new_aliases);
+        update_option('mmpro_email_aliases_data_backup', $new_aliases);
+        
+        // Also save as a separate name to check for conflicts
+        update_option('mmpro_email_aliases_data_alt', $new_aliases);
+        
+        // Log successful save
+        $this->log_data_operation('save', count($new_aliases));
+        
+        delete_transient('mmpro_email_aliases_cache');
+        $aliases_data = $new_aliases;
+        
+        echo '<div class="notice notice-success is-dismissible"><p>' . __('Aliases saved successfully!', 'mmpro-email-aliases') . '</p></div>';
+    }
+    
+    // Handle import
+    if (isset($_POST['import_aliases']) && check_admin_referer('mmpro_import_aliases', 'mmpro_import_nonce')) {
+        if (!empty($_FILES['import_file']['tmp_name'])) {
+            $format = isset($_POST['format']) ? sanitize_text_field($_POST['format']) : 'json';
+            $file = $_FILES['import_file']['tmp_name'];
+            $import_data = array();
+            
+            if ($format === 'json') {
+                $content = file_get_contents($file);
+                $data = json_decode($content, true);
+                
+                if ($data && is_array($data)) {
+                    $import_data = $data;
+                }
+            } elseif ($format === 'csv') {
+                if (($handle = fopen($file, 'r')) !== false) {
+                    // Skip header row
+                    fgetcsv($handle);
+                    
+                    while (($row = fgetcsv($handle)) !== false) {
+                        if (count($row) >= 2 && !empty($row[0])) {
+                            $alias = sanitize_email($row[0]);
+                            $destinations = array_map('trim', explode(',', $row[1]));
+                            $destinations = array_map('sanitize_email', $destinations);
+                            $destinations = array_filter($destinations);
+                            
+                            if (!empty($alias) && !empty($destinations)) {
+                                $import_data[$alias] = $destinations;
+                            }
+                        }
+                    }
+                    
+                    fclose($handle);
+                }
+            }
+            
+            if (!empty($import_data)) {
+                // Save with multiple methods for redundancy
+                update_option('mmpro_email_aliases_data', $import_data);
+                update_option('mmpro_email_aliases_data_backup', $import_data);
+                
+                // Also save as a separate name to check for conflicts
+                update_option('mmpro_email_aliases_data_alt', $import_data);
+                
+                // Log successful import
+                $this->log_data_operation('import', count($import_data));
+                
+                delete_transient('mmpro_email_aliases_cache');
+                $aliases_data = $import_data;
+                echo '<div class="notice notice-success is-dismissible"><p>' . __('Aliases imported successfully!', 'mmpro-email-aliases') . '</p></div>';
+            } else {
+                echo '<div class="notice notice-error is-dismissible"><p>' . __('Invalid import file or format.', 'mmpro-email-aliases') . '</p></div>';
+            }
+        }
+    }
+    
+    // Handle export
+    if (isset($_GET['action']) && $_GET['action'] === 'export' && isset($_GET['_wpnonce']) && wp_verify_nonce($_GET['_wpnonce'], 'mmpro_export')) {
+        $format = isset($_GET['format']) ? sanitize_text_field($_GET['format']) : 'json';
+        
+        if ($format === 'json') {
+            header('Content-Type: application/json');
+            header('Content-Disposition: attachment; filename="email-aliases-' . date('Y-m-d') . '.json"');
+            echo json_encode($aliases_data, JSON_PRETTY_PRINT);
+            exit;
+        } elseif ($format === 'csv') {
+            header('Content-Type: text/csv');
+            header('Content-Disposition: attachment; filename="email-aliases-' . date('Y-m-d') . '.csv"');
+            
+            $output = fopen('php://output', 'w');
+            fputcsv($output, array('Alias', 'Destinations'));
+            
+            foreach ($aliases_data as $alias => $destinations) {
+                fputcsv($output, array($alias, implode(', ', $destinations)));
+            }
+            
+            fclose($output);
+            exit;
+        }
+    }
+    
+    // Handle data recovery
+    if (isset($_GET['action']) && $_GET['action'] === 'recover_data' && isset($_GET['_wpnonce']) && wp_verify_nonce($_GET['_wpnonce'], 'mmpro_recover_data')) {
+        $backup_data = get_option('mmpro_email_aliases_data_backup', array());
+        $alt_data = get_option('mmpro_email_aliases_data_alt', array());
+        
+        // Choose the non-empty backup source
+        $recovery_data = !empty($backup_data) ? $backup_data : $alt_data;
+        
+        if (!empty($recovery_data)) {
+            update_option('mmpro_email_aliases_data', $recovery_data);
+            delete_transient('mmpro_email_aliases_cache');
+            
+            // Log recovery operation
+            $this->log_data_operation('recovery', count($recovery_data));
+            
+            $aliases_data = $recovery_data;
+            echo '<div class="notice notice-success is-dismissible">';
+            echo '<p>' . sprintf(__('Successfully recovered %d aliases from backup!', 'mmpro-email-aliases'), count($recovery_data)) . '</p>';
+            echo '</div>';
+        } else {
+            echo '<div class="notice notice-error is-dismissible">';
+            echo '<p>' . __('No backup data found to recover.', 'mmpro-email-aliases') . '</p>';
+            echo '</div>';
+        }
+    }
+}
     
     /**
      * Show data persistence debug info
