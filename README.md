@@ -1,6 +1,6 @@
 # MMPRO Email Alias Manager
 
-![MMPRO Email Alias Manager](assets/banner-772x250.png)
+![MMPRO Email Alias Manager](assets/img/readme-banner.png)
 
 MMPRO Email Alias Manager is a WordPress plugin that allows you to easily manage email aliases and forwarding rules through a simple admin interface. Combined with a Cloudflare Email Worker, it enables WordPress admins to manage email forwarding without needing access to the domain's email server or Cloudflare account.
 
