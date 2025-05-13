@@ -3,7 +3,7 @@
  * Plugin Name: MMPRO Email Alias Manager
  * Plugin URI: https://memberminderpro.com/
  * Description: Manage email aliases and forward rules with a JSON API endpoint for Cloudflare Workers.
- * Version: 1.0.4
+ * Version: 1.0.5
  * Author: Member Minder Pro, LLC
  * Author URI: https://memberminderpro.com/
  * Text Domain: mmpro-email-aliases
